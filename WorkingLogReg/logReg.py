@@ -7,10 +7,7 @@ from sklearn import preprocessing
 def forwardPass(x):
     inp = np.insert(x, 0, 1, axis=0)
     a = np.dot(weights, inp)
-    if (1 + math.exp(-a)) != 0:
-        sigmoid = 1 / (1 + math.exp(-a))
-    else:
-        sigmoid = eps
+    sigmoid = 1 / (1 + math.exp(-a))
     return sigmoid
 
 
@@ -22,22 +19,23 @@ def regTerm(i, lamReg, reg):
 
 def trainNN(regularization, learningRate, featuresToDelete, samples):
 
+    eps = 1e-7
     data = np.delete(samples, featuresToDelete, axis=1)
     data = np.random.permutation(data)
     data_train = data[:int(0.8 * len(data))]
     # print(data_train)
     data_test = data[int(0.8 * len(data)):]
-    samples = data[:, :2]
-    targets = data[:, 2]
+    samples = data_train[:, :2]
+    targets = data_train[:, 2]
     epochs = 0
     converged = False
     while not converged:
         epochs += 1
         for j in range(len(samples)):
             out = forwardPass(samples[j])
-            inpTemp = np.insert(samples[j], 0, 1, axis=0)
+            inp = np.insert(samples[j], 0, 1, axis=0)
             for r in range(len(weights)):
-                gradient = (targets[j] - out) * inpTemp[r]
+                gradient = (targets[j] - out) * inp[r]
                 weights[r] -= learningRate * -gradient + regTerm(r, 0.001, regularization)
 
             pred = np.clip(out, eps, 1 - eps)
@@ -49,11 +47,11 @@ def trainNN(regularization, learningRate, featuresToDelete, samples):
             print(f'Converged after {epochs} epochs.')
     test = data_test[:, :2]
     testTarget = data_test[:, 2]
-    sm = 0
-    for q in range(len(test)):
-        sm += (abs(testTarget[q]-forwardPass(test[q])))
-        print(f'difference {sm}')
-        # print(f'Target: {testTarget[q]} prediction: {forwardPass(test[q])}')
+    test_error = 0
+    for i in range(len(test)):
+        test_error += (testTarget[i]-forwardPass(test[i]))**2
+    print(f'Error on test set: {test_error}')
+    # print(f'Target: {testTarget[q]} prediction: {forwardPass(test[q])}')
 
 
 df = pd.read_csv('https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data', header=None)
@@ -67,18 +65,7 @@ samples = preprocessing.MinMaxScaler().fit_transform(samples)
 samples2 = samples.copy()
 weights = np.random.randn(3)
 weights2 = weights.copy()
-eps = 1e-15
 trainNN(True, 0.1, [1, 3], samples)
-weights = weights2
-samples = samples2
-trainNN(True, 0.1, [0, 3], samples)
-weights = weights2
-samples = samples2
-trainNN(True, 0.1, [2, 3], samples)
-weights = weights2
-samples = samples2
-trainNN(True, 0.1, [1, 2], samples)
-
 
 
 def plotConverge(samples, features):
