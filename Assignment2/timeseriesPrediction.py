@@ -1,14 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
 import scipy.io as sio
 from sklearn import preprocessing
-import statsmodels
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import KFold
 import keras
 from keras.layers import LSTM, Dense, Activation
+from keras.callbacks import EarlyStopping
 
 data = sio.loadmat("Xtrain.mat")["Xtrain"]
-data_normed = preprocessing.minmax_scale(data)
+# create a scaler and fit it on data
+scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+scaler.fit(data)
+
+data_normed = scaler.transform(data)
 
 print(data.shape)
 # plt.subplot(121)
@@ -22,55 +27,115 @@ print(data.shape)
 # plt.xlabel("Time step")
 # plt.show()
 
-# TODO use ensemble
-# Test is length 200
-# Input is window of 50 points
 inputsize = 100
 
-model = keras.Sequential()
-model.add(LSTM(32, return_sequences=True, input_shape=(inputsize, 1), dropout=0.2, recurrent_dropout=0.2))
-model.add(LSTM(32, return_sequences=False, dropout=0.2, recurrent_dropout=0.2))
-model.add(Dense(1, activation='relu'))
+def evaluate_model(inp, target, epochs=1):
+    # encode targets
 
-model.compile(loss='mean_squared_error',
-              optimizer='adam',
-              metrics=['accuracy'])
+    # define model
+    model = keras.Sequential()
+    model.add(LSTM(32, return_sequences=True, input_shape=(inp.shape[1], 1), dropout=0.2, recurrent_dropout=0.2))
+    model.add(LSTM(32, return_sequences=False, dropout=0.2, recurrent_dropout=0.2))
+    model.add(Dense(1, activation='tanh'))
+    model.compile(loss='mean_squared_error',
+                  optimizer='adam',
+                  metrics=['accuracy'])
+    # fit model
+    # model.fit(trainX, trainy_enc, epochs=50, verbose=0)
+#     early_stopping_monitor = EarlyStopping(monitor='loss', patience=3)
+    history = model.fit(inp, target, epochs=epochs, validation_split=0.1, verbose=2)
+    # evaluate the model
+    # _, test_acc = model.evaluate(testX, testY, verbose=0)
+    return model, history
 
-# Maybe this does not need to be done (just use normal data)
-# Create train and test data (model is trained on sequence and should predict the next "window" timesteps
+
+def ensemble_predictions(members, testX):
+    # make predictions
+    yhats = [model.predict(testX) for model in members]
+    yhats = np.array(yhats)
+    # sum across ensemble members
+    # TODO maybe mean?
+    summed = np.sum(yhats, axis=0)
+    # argmax across classes
+    result = np.argmax(summed, axis=1)
+    return result
+
+
+# evaluate a specific number of members in an ensemble
+def evaluate_n_members(members, n_members, testX, testy):
+    # select a subset of members
+    subset = members[:n_members]
+    # make prediction
+    yhat = ensemble_predictions(subset, testX)
+    # calculate accuracy
+    return accuracy_score(testy, yhat)
+
+
+
+# model = keras.Sequential()
+# model.add(LSTM(32, return_sequences=True, input_shape=(inputsize, 1), dropout=0.2, recurrent_dropout=0.2))
+# model.add(LSTM(32, return_sequences=False, dropout=0.2, recurrent_dropout=0.2))
+# model.add(Dense(1, activation='relu'))
+#
+# model.compile(loss='mean_squared_error',
+#               optimizer='adam',
+#               metrics=['accuracy'])
+# model.summary()
+
+# TODO use ensemble
+# Test is length 200
+
+# Create train and test data (model is trained on sequence and should predict the next timestep)
 targetIndex = np.array(range(inputsize, len(data)))
 # print(targetIndex-100)
-inputdata = []
-target = []
-for ind in targetIndex:
-    inputdata.append(data[ind-inputsize:ind])
-    target.append(ind)
-inputdata = np.array(inputdata)
-target = np.array(target)
-# inputdata = data[targetIndex-inputsize:targetIndex+window]
-print(inputdata.shape)
+inputdata = np.array([data_normed[ind-inputsize:ind] for ind in targetIndex])
+target = data_normed[targetIndex]
 
-xData = inputdata[:, :100]
-print(f'xData Shape {xData.shape}')
+print(f'inputdata Shape {inputdata.shape}')
 print(f'target Shape {target.shape}')
 
-# Split into validation
-splitInd = int(len(xData)*0.9)
-xData_train = xData[:splitInd]
-target_train = target[:splitInd]
-xData_val = xData[splitInd:]
-target_val = target[splitInd:]
-print("xData_train.shape", xData_train.shape)
-print("target_train.shape", target_train.shape)
-print("xData_val.shape", xData_val.shape)
-print("target_val.shape", target_val.shape)
+# Split into train and test
+splitInd = int(len(inputdata)*0.9)
+trainX = inputdata[:splitInd]
+trainY = target[:splitInd]
+testX = inputdata[splitInd:]
+testY = target[splitInd:]
+print("trainX.shape", trainX.shape)
+print("trainY.shape", trainY.shape)
+print("testX.shape", testX.shape)
+print("testY.shape", testY.shape)
 
-model.summary()
-epochs = 1
-history = model.fit(xData_train, target_train, epochs=epochs, shuffle=True, validation_data=(xData_val, target_val))
+# model, history = evaluate_model(trainX, trainY, testX, testY, epochs=5)
+model, history = evaluate_model(trainX, trainY, epochs=50)
 
-pred = model.predict(xData_val)
+# plt.plot(history.history['loss'])
+# plt.show()
+pred = model.predict(testX)
+pred_unscaled = scaler.inverse_transform(pred)
+testY_unscaled = scaler.inverse_transform(testY)
 print("pred.shape ", pred.shape)
-plt.plot(pred, 'o', c='r')
-plt.plot(target_val, 'o', c='g')
+
+plt.figure(figsize=(12,6))
+plt.subplot(121)
+plt.title('Normalized prediction')
+plt.plot(pred, 'o', c='r', label="Predicted")
+plt.plot(testY, 'o', c='g', label="Target")
+plt.legend()
+
+plt.subplot(122)
+plt.title('Unscaled prediction')
+plt.plot(pred_unscaled, 'o', c='r', label="Predicted")
+plt.plot(testY_unscaled, 'o', c='g', label="Target")
+plt.legend()
+plt.show()
+
+plt.title('Unscaled prediction')
+plt.plot(pred_unscaled, 'o', c='r', label="Predicted")
+plt.plot(testY_unscaled, 'o', c='g', label="Target")
+plt.legend()
+plt.show()
+
+plt.plot(history.history['loss'], label='loss')
+plt.plot(history.history['val_loss'], label='val_loss')
+plt.legend()
 plt.show()
